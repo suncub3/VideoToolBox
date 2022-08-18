@@ -2,6 +2,7 @@
 // Created by sunchongyang on 2021/12/29.
 //
 
+#include <libyuv/convert.h>
 #include "vt_encoder.h"
 #include "glog/logging.h"
 
@@ -411,85 +412,34 @@ CVImageBufferRef VTEncoder::Frame2ImageBuffer2(AVFrame *frame) {
     LOG(INFO) << "create pixel buffer failed";
     return nullptr;
   }
-  const int h = frame->height;
-  CVPixelBufferLockBaseAddress(pixel_buf, 0);
+  size_t w  =frame->width;
+  size_t h = frame->height;
+  CVPixelBufferLockBaseAddress(pixel_buf, kCVPixelBufferLock_ReadOnly);
 
-  // Here y_src is Y-Plane of YUV(NV12) data.
-  uint8_t *y_src  = frame->data[0];
-  uint8_t *y_dest = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buf, 0));
-  size_t y_src_bytesPerRow  = frame->linesize[0];
-  size_t y_dest_bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixel_buf, 0);
-  /**
-   将FFmpeg解码后的YUV数据塞到CVPixelBuffer中，这里必须注意不能使用以下三种形式，否则将可能导致画面错乱或者绿屏或程序崩溃！
-   memcpy(y_dest, y_src, w * h);
-   memcpy(y_dest, y_src, frame->linesize[0] * h);
-   memcpy(y_dest, y_src, CVPixelBufferGetBytesPerRowOfPlane(pixel_buf, 0) * h);
-
-   原因是因为FFmpeg解码后的YUV数据的linesize大小是作了字节对齐的，所以视频的w和linesize[0]很可能不相等，同样的 CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0) 也是作了字节对齐的，
-   并且对齐大小跟FFmpeg的对齐大小可能也不一样，这就导致了最坏情况下这三个值都不等！我的一个测试视频的宽度是852，FFMpeg解码使用了32字节对齐后linesize【0】是 864，
-   而 CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0) 获取到的却是 896，通过计算得出使用的是 64 字节对齐的，所以上面三种 memcpy 的写法都不靠谱！
-   【字节对齐】只是为了让CPU拷贝数据速度更快，由于对齐多出来的冗余字节不会用来显示，所以填 0 即可！目前来看FFmpeg使用32个字节做对齐，而CVPixelBuffer即使指定了32缺还是使用64个字节做对齐！
-   以下代码的意思是：
-      按行遍历 CVPixelBuffer 的每一行；
-      先把该行全部填 0 ，然后把该行的FFmpeg解码数据（包括对齐字节）复制到 CVPixelBuffer 中；
-      因为有上面分析的对齐不相等问题，所以只能一行一行的处理，不能直接使用 memcpy 简单处理！
-   */
-  for (int i = 0; i < h; i ++) {
-//    bzero(y_dest, y_dest_bytesPerRow);
-    memcpy(y_dest, y_src, y_src_bytesPerRow);
-    y_src  += y_src_bytesPerRow;
-    y_dest += y_dest_bytesPerRow;
-  }
-
-  // Here uv_src is UV-Plane of YUV(NV12) data.
+  uint8_t *y_src = frame->data[0];
   uint8_t *u_src = frame->data[1];
   uint8_t *v_src = frame->data[2];
-  if (frame->linesize[1] != frame->linesize[2]) {
-    LOG(ERROR) << "uv are not equal";
-    return nullptr;
-  }
-  size_t uv_src_bytesPerRow  = frame->linesize[1];
 
-  uint8_t *uv_dest = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buf, 1));
-  size_t uv_dest_bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixel_buf, 1);
+  uint8_t *y_dest = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pixel_buf, 0);
+  uint8_t *u_dest = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pixel_buf, 1);
+  uint8_t *v_dest = (uint8_t *)CVPixelBufferGetBaseAddressOfPlane(pixel_buf, 2);
 
-  /*
-   对于 UV 的填充过程跟 Y 是一个道理，需要按行 memcpy 数据！
-   */
-  for (int i = 0; i < h/2; i++) {
-//    bzero(uv_dest, uv_dest_bytesPerRow);
-    uint8_t *uv_dest_ = uv_dest;
-    uint8_t *u_src_ = u_src;
-    uint8_t *v_src_ = v_src;
-    for (int j = 0; j < uv_src_bytesPerRow; j++) {
-      memcpy(uv_dest_, u_src_, 1);
-      uv_dest_++;
-      u_src_++;
-      memcpy(uv_dest_, v_src_, 1);
-      uv_dest_++;
-      v_src_++;
-    }
-    u_src  += uv_src_bytesPerRow;
-    v_src  += uv_src_bytesPerRow;
-    uv_dest += uv_dest_bytesPerRow;
-  }
+  size_t y_src_bytesPerRow  = frame->linesize[0];
+  size_t u_src_bytesPerRow  = frame->linesize[1];
+  size_t v_src_bytesPerRow  = frame->linesize[2];
+  size_t y_dest_bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixel_buf, 0);
+  size_t u_dest_bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixel_buf, 1);
+  size_t v_dest_bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixel_buf, 2);
 
-  //only swap VU for NV21
-  if (frame->format == AV_PIX_FMT_NV21) {
-    uint8_t *uv = static_cast<uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buf, 1));
-    /*
-     将VU交换成UV；
-     */
-    for (int i = 0; i < h/2; i++) {
-      for (int j = 0; j < uv_dest_bytesPerRow - 1; j+=2) {
-        int v = *uv;
-        *uv = *(uv + 1);
-        *(uv + 1) = v;
-        uv += 2;
-      }
-    }
-  }
-  CVPixelBufferUnlockBaseAddress(pixel_buf, 0);
+  libyuv::I420Copy(y_src, y_src_bytesPerRow,
+                   u_src, u_src_bytesPerRow,
+                   v_src, v_src_bytesPerRow,
+                   y_dest, y_dest_bytesPerRow,
+                   u_dest, u_dest_bytesPerRow,
+                   v_dest, v_dest_bytesPerRow,
+                   w, h);
+
+  CVPixelBufferUnlockBaseAddress(pixel_buf, kCVPixelBufferLock_ReadOnly);
   return pixel_buf;
 }
 

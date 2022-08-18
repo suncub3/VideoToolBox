@@ -208,9 +208,9 @@ void Stream::VTEncode(AVFrame *frame) {
     pkt->stream_index = video_out_stream_index_;
 
     // 将编码后的数据写入文件
-    LOG(INFO) << "before pts: "<<pkt->pts;
+//    LOG(INFO) << "before pts: "<<pkt->pts;
     av_packet_rescale_ts(pkt, (AVRational) {1,1000}, octx_->streams[video_out_stream_index_]->time_base);
-    LOG(INFO) << "after pts: "<<pkt->pts;
+//    LOG(INFO) << "after pts: "<<pkt->pts;
     pkt->pos = -1;
 
     // 将packet写入输出

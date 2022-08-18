@@ -378,7 +378,7 @@ int VTDecoder::Decode(AVPacket *packet) {
   if (status == noErr) {
     status = VTDecompressionSessionWaitForAsynchronousFrames(session_);
   }
-  
+
   if (status == kVTInvalidSessionErr) {
     refresh_session_ = true;
   }
@@ -441,22 +441,13 @@ void VTDecoder::ToAVFrame(
   size_t u_dest_bytesPerRow = yuv420_frame->linesize[1];
   size_t v_dest_bytesPerRow = yuv420_frame->linesize[2];
 
-  for (int i = 0; i < h; i ++) {
-    memcpy(y_dest, y_src, y_src_bytesPerRow);
-    y_src  += y_src_bytesPerRow;
-    y_dest += y_dest_bytesPerRow;
-  }
-
-  for (int i = 0; i < h/2; i ++) {
-    memcpy(u_dest, u_src, u_src_bytesPerRow);
-    u_src  += u_src_bytesPerRow;
-    u_dest += u_dest_bytesPerRow;
-  }
-  for (int i = 0; i < h/2; i ++) {
-    memcpy(v_dest, v_src, v_src_bytesPerRow);
-    v_src  += v_src_bytesPerRow;
-    v_dest += v_dest_bytesPerRow;
-  }
+  libyuv::I420Copy(y_src, y_src_bytesPerRow,
+                   u_src, u_src_bytesPerRow,
+                   v_src, v_src_bytesPerRow,
+                   y_dest, y_dest_bytesPerRow,
+                   u_dest, u_dest_bytesPerRow,
+                   v_dest, v_dest_bytesPerRow,
+                   w, h);
 
   CVPixelBufferUnlockBaseAddress(image_buffer, kCVPixelBufferLock_ReadOnly);
 
